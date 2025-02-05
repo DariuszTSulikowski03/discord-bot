@@ -4,12 +4,11 @@ from discord.ext import commands
 import requests
 import os
 import logging
-from urllib.parse import urlparse, parse_qs, unquote
 
 class OddsCog(commands.Cog, name="The Odds API"):
     def __init__(self, bot):
         self.bot = bot
-        # Read API key from environment variable or use the provided key
+        # Use the API key from .env or the provided key as default
         self.api_key = os.getenv("ODDS_API_KEY", "f0d255b08cbae82066c2c9dc2aae73d2")
         self.base_url = "https://api.the-odds-api.com/v4/sports"
     
@@ -37,7 +36,6 @@ class OddsCog(commands.Cog, name="The Odds API"):
             await ctx.send(embed=embed)
         else:
             # Fetch odds for the given sport
-            # Default parameters: regions=eu, markets=h2h, oddsFormat=decimal
             url = f"{self.base_url}/{sport}/odds/?apiKey={self.api_key}&regions=eu&markets=h2h&oddsFormat=decimal"
             response = requests.get(url)
             if response.status_code != 200:
@@ -53,7 +51,6 @@ class OddsCog(commands.Cog, name="The Odds API"):
                 home_team = event.get("home_team", "Nieznany")
                 away_team = event.get("away_team", "Nieznany")
                 odds_str = ""
-                # For each bookmaker, try to retrieve h2h market odds
                 for bookmaker in event.get("bookmakers", []):
                     bookmaker_name = bookmaker.get("title", "Nieznany bukmacher")
                     for market in bookmaker.get("markets", []):
@@ -68,4 +65,3 @@ class OddsCog(commands.Cog, name="The Odds API"):
 
 async def setup(bot):
     await bot.add_cog(OddsCog(bot))
-
