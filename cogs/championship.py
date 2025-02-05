@@ -10,7 +10,8 @@ from utils import (
     save_submission,
     get_user_rank,
     count_daily_submissions,
-    get_user_profile
+    get_user_profile,
+    get_leaderboard
 )
 from datetime import datetime
 import re
@@ -19,11 +20,8 @@ import logging
 class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
     def __init__(self, bot):
         self.bot = bot
-        # Channel where submissions are accepted
-        self.submission_channel = "mistrzostwa-typerskie"
-        # Role required to submit
-        self.required_role = "Zweryfikowany"
-        # Map bet types to emoji for a better UI
+        self.submission_channel = "mistrzostwa-typerskie"  # Channel where submissions are accepted
+        self.required_role = "Zweryfikowany"  # Role required to submit
         self.emoji_map = {
             "solo": "⚔️",
             "ako": "🎯"
@@ -31,18 +29,18 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Ignore messages from bots and those not in the submission channel
+        # Ignore messages from bots and those not in the designated channel
         if message.author.bot or message.channel.name != self.submission_channel:
             return
 
-        # Validate the message format: expected "[punkty] | [link]"
+        # Validate message format: expected "[punkty] | [link]"
         if not re.match(r'^\d+ \| https?://\S+', message.content):
             await message.delete()
             await error_embed(message.channel, 
                 "**Nieprawidłowy format!**\nPoprawny format: `[punkty] | [link]`\nPrzykład: `250 | https://example.com`")
             return
 
-        # Check if the user meets role and daily submission requirements
+        # Check requirements (role and daily limit)
         if not await self.check_requirements(message):
             return
 
@@ -63,13 +61,13 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             await error_embed(message.channel, result['message'])
 
     async def check_requirements(self, message):
-        # Verify the user has the required role
+        # Check if user has the required role
         if not any(role.name == self.required_role for role in message.author.roles):
             await error_embed(message.channel, 
                 f"Wymagana rola **{self.required_role}** do uczestnictwa!")
             return False
 
-        # Verify the user has not already submitted today
+        # Check if user already submitted today
         last_sub = get_last_submission(message.author.id)
         if last_sub and is_same_day(last_sub, datetime.now(self.bot.warsaw_tz)):
             await error_embed(message.channel,
@@ -80,23 +78,20 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
 
     async def process_submission(self, user, link, declared_points):
         try:
-            # Parse the coupon data from the link (e.g., decoding JWT)
             coupon_data = parse_coupon_link(link)
             if not coupon_data:
-                return {'status': 'error', 'message': 'Nieprawidłowy link do kuponu!'}
+                # If no coupon data is found, return a clear error message
+                return {'status': 'error', 'message': 'Nie wykryto danych z przesłanego linku. Upewnij się, że link jest poprawny.'}
 
-            # Calculate the points based on the coupon data
             calculated_points = calculate_points(
                 coupon_data['amount_won'],
                 coupon_data['odds'],
                 coupon_data['bet_type']
             )
 
-            # Verify the declared points roughly match the calculated ones (tolerance of 50 points)
             if abs(declared_points - calculated_points) > 50:
                 return {'status': 'error', 'message': 'Niezgodność punktów! Sprawdź obliczenia.'}
 
-            # Save the submission to the database
             save_submission(
                 user_id=user.id,
                 username=user.display_name,
@@ -116,12 +111,10 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             return {'status': 'error', 'message': 'Wewnętrzny błąd systemu!'}
 
     async def send_success(self, message, result):
-        # Create an embed to confirm a successful submission
         embed = discord.Embed(
             title=f"✅ Kupon zaakceptowany! {self.emoji_map.get(result['bet_type'], '')}",
             color=discord.Color.green(),
-            description=f"**{message.author.display_name}** zdobywa:\n"
-                        f"```🪙 {result['points']} punktów!```"
+            description=f"**{message.author.display_name}** zdobywa:\n```🪙 {result['points']} punktów!```"
         )
         
         embed.add_field(
@@ -152,7 +145,6 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             color=ctx.author.color
         )
         
-        # Create a progress bar toward a reward (example threshold: 5000 points)
         progress = user_data['points'] / 5000 * 100
         progress_bar = f"```css\n[{'█' * int(progress//5)}{' ' * (20 - int(progress//5))}] {user_data['points']}/5000```"
         
@@ -170,10 +162,25 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
         
         embed.add_field(
             name="🏅 Osiągnięcia",
-            value="\n".join(f"• {ach}" for ach in user_data['achievements'][:3]),
+            value="\n".join(f"• {ach}" for ach in user_data['achievements'][:3]) or "Brak",
             inline=True
         )
         
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(
+        name="topka",
+        description="Pokaż ranking zawodników"
+    )
+    async def topka(self, ctx):
+        leaderboard = get_leaderboard()
+        if not leaderboard:
+            await error_embed(ctx.channel, "Ranking nie jest dostępny.")
+            return
+
+        embed = discord.Embed(title="Ranking", color=discord.Color.gold())
+        for idx, user in enumerate(leaderboard, start=1):
+            embed.add_field(name=f"#{idx}", value=f"{user['username']}: {user['points']} punktów", inline=False)
         await ctx.send(embed=embed)
 
 async def setup(bot):
