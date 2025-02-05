@@ -1,4 +1,15 @@
-# .gitignore
-.env
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Environment variables file
+.env
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Logs
+*.log
