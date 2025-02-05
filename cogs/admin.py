@@ -1,7 +1,7 @@
 # cogs/admin.py
 import discord
 from discord.ext import commands
-from utils import *
+from utils import get_championship_stats
 import logging
 
 class AdminTools(commands.Cog, name="Narzędzia Administracyjne"):
