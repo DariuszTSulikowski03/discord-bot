@@ -30,27 +30,24 @@ bot = CustomBot()
 @bot.event
 async def on_ready():
     logging.info(f"{bot.user.name} gotowy do działania!")
-    # Sync the app commands (if you're using them)
     await bot.tree.sync()
 
 async def main():
     initial_extensions = [
         'cogs.championship',
         'cogs.help',
-        # Uncomment or remove the following line if you have (or do not have) a control cog
+        # Uncomment if you have a control cog:
         # 'cogs.control',
         'cogs.admin'
     ]
     
     async with bot:
-        # Load each extension asynchronously
         for extension in initial_extensions:
             try:
                 await bot.load_extension(extension)
                 logging.info(f"Załadowano moduł: {extension}")
             except Exception as e:
                 logging.error(f"Błąd przy ładowaniu {extension}: {e}")
-        # Start the bot with the provided token
         await bot.start(os.getenv("DISCORD_TOKEN"))
 
 if __name__ == "__main__":
