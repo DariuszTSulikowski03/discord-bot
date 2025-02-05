@@ -1,12 +1,12 @@
 # utils.py
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, func
 from sqlalchemy.orm import declarative_base, sessionmaker
 from contextlib import contextmanager
 import jwt
-import hashlib
 from datetime import datetime
 import discord
 
+# Define the database models using SQLAlchemy
 Base = declarative_base()
 
 class Player(Base):
@@ -25,6 +25,7 @@ class Submission(Base):
     points = Column(Integer)
     timestamp = Column(DateTime)
 
+# Create the SQLite database (stored in the data folder)
 engine = create_engine('sqlite:///data/typers.db')
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
@@ -51,16 +52,15 @@ def calculate_points(amount_won, odds, bet_type):
 
 def save_submission(user_id, username, points, bet_type, odds):
     with db_session() as s:
-        # Aktualizacja gracza
+        # Update player's data
         player = s.query(Player).get(user_id)
         if not player:
             player = Player(id=user_id, username=username)
             s.add(player)
-        
         player.points += points
         player.last_submission = datetime.now()
         
-        # Dodanie zgłoszenia
+        # Add a new submission record
         submission = Submission(
             user_id=user_id,
             bet_type=bet_type,
@@ -77,7 +77,6 @@ def get_user_rank(user_id):
 
 def count_daily_submissions():
     with db_session() as s:
-        from sqlalchemy import func
         today = datetime.now().date()
         count = s.query(func.count(Submission.id)).filter(func.date(Submission.timestamp) == today).scalar()
         return count or 0
@@ -96,7 +95,7 @@ def get_user_profile(user_id):
         total_points = sum(sub.points for sub in submissions)
         submissions_count = len(submissions)
         avg_points = int(total_points / submissions_count) if submissions_count else 0
-        # Przykładowe osiągnięcia (można rozszerzyć logikę)
+        # Example achievements – extend this logic as needed
         achievements = []
         if player.points >= 1000:
             achievements.append("Pierwszy tysiąc!")
@@ -111,13 +110,10 @@ def get_user_profile(user_id):
 
 def get_championship_stats():
     with db_session() as s:
-        from sqlalchemy import func
         total_submissions = s.query(func.count(Submission.id)).scalar() or 0
-        # Przykładowa średnia – można rozszerzyć o bardziej szczegółowe obliczenia
-        avg_daily = total_submissions  # dla uproszczenia
-        # Największy skok punktowy – przykładowo
-        biggest_jump = 100  
-        # Top 3 zawodników
+        # For simplicity, we use total submissions as the daily average here
+        avg_daily = total_submissions  
+        biggest_jump = 100  # Placeholder value; adjust as needed
         players = s.query(Player).order_by(Player.points.desc()).limit(3).all()
         top3 = [{'name': player.username, 'points': player.points} for player in players]
         return {
@@ -126,8 +122,6 @@ def get_championship_stats():
             'biggest_jump': biggest_jump,
             'top3': top3
         }
-
-# Pomocnicze funkcje do walidacji zgłoszeń
 
 def get_last_submission(user_id):
     with db_session() as s:
@@ -138,8 +132,8 @@ def is_same_day(timestamp, now):
     return timestamp.date() == now.date()
 
 def parse_coupon_link(link):
-    # Przykładowa implementacja parsowania linku do kuponu
-    # W praktyce możesz użyć bibliotek do obsługi JWT lub customowych reguł
+    # Example implementation: extract a token from the link and decode it.
+    # In a real-world scenario, you may want to validate the token signature.
     try:
         token = link.split("id=")[1].split("&")[0]
         decoded = jwt.decode(token, options={"verify_signature": False})
