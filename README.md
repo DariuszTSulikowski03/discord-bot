@@ -1,22 +1,29 @@
-# Discord Bot - Prosty Turniej Typerski
+# Discord Tournament Bot
 
-## Opis projektu
-To jest prosty bot Discord do turnieju typerskiego. Użytkownicy posiadający rolę **"Zweryfikowany"** mogą zgłaszać swoje kupony raz dziennie, podając liczbę punktów i link. Bot sumuje punkty, umożliwia sprawdzenie rankingu oraz oferuje kalkulator punktów. Dodatkowo, właściciel bota ma dostęp do zaawansowanych poleceń kontroli.
+This Discord bot manages a tournament by tracking user points, daily submissions, and providing useful commands such as ranking, coupon submission, and a points calculator.
 
-## Komendy użytkowników
-- **!kupon [punkty] [link]** – dodaje zgłoszenie kuponu (tylko raz dziennie)
-- **!ranking** – wyświetla aktualny ranking punktowy
-- **!kalkulator [typ] [odds] [kwota]** – oblicza punkty wg zasad:
-  - Zakład SOLO: mnożnik 1 (lub 2, jeśli odds > 10.0)
-  - Zakład AKO: mnożnik 2.5 (lub 5, jeśli odds > 10.0)
-  - Przykład: !kalkulator AKO 11.0 50 → 250 punktów
-- **!help** – wyświetla listę dostępnych komend
+## Features
 
-## Komendy właściciela (zaawansowana kontrola)
-- **!shutdown** – wyłącza bota
-- **!reload [nazwa_modulu]** – przeładowuje wskazany moduł
-- **!status** – pokazuje status bota
+- **Persistent Data Storage:** (In-memory for now; consider a database for production.)
+- **Time Zone Handling:** Uses Warsaw time for daily submission limits.
+- **Commands Include:**
+  - `!kupon [punkty] [link]` – Submit a coupon.
+  - `!ranking` – Show the top 10 users.
+  - `!kalkulator [typ] [odds] [kwota]` – Calculate points.
+  - `!podsumowanie` – Show tournament statistics (Admin only).
+  - `!help` – List available commands.
 
-## Jak uruchomić bota
-1. Sklonuj repozytorium.
-2. Utwórz plik **.env** z zawartością:
+## Setup
+
+### Prerequisites
+
+- Python 3.8+
+- pip
+- A Discord Bot Token
+
+### Installation
+
+1. **Clone the Repository:**
+   ```bash
+   git clone https://github.com/yourusername/discord-tournament-bot.git
+   cd discord-tournament-bot
