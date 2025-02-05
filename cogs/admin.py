@@ -1,42 +1,22 @@
-# cogs/admin.py
 import discord
 from discord.ext import commands
-from utils import get_championship_stats
 import logging
 
 class AdminTools(commands.Cog, name="Narzędzia Administracyjne"):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.hybrid_command(
-        name="podsumowanie",
-        description="Pokazuje statystyki mistrzostw"
-    )
+    @commands.command(name="podsumowanie", help="Pokazuje statystyki turnieju")
     @commands.has_permissions(administrator=True)
     async def championship_stats(self, ctx):
-        stats = get_championship_stats()
+        total_users = len(self.bot.user_points)
+        total_points = sum(self.bot.user_points.values())
+        avg_points = total_points / total_users if total_users else 0
         
-        embed = discord.Embed(
-            title="📈 Statystyki Mistrzostw",
-            color=discord.Color.blue()
-        )
-        
-        embed.add_field(
-            name="Ogólne",
-            value=f"```Łączne zgłoszenia: {stats['total_submissions']}\n"
-                  f"Średnia punktów/dzień: {stats['avg_daily']}\n"
-                  f"Największy skok: +{stats['biggest_jump']}```",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="Top Typers",
-            value="\n".join(
-                f"{idx}. {user['name']} ({user['points']})" 
-                for idx, user in enumerate(stats['top3'], 1)
-            ),
-            inline=True
-        )
+        embed = discord.Embed(title="Podsumowanie Turnieju", color=discord.Color.gold())
+        embed.add_field(name="Uczestnicy", value=total_users)
+        embed.add_field(name="Łączna liczba punktów", value=total_points)
+        embed.add_field(name="Średnia punktów", value=f"{avg_points:.2f}")
         
         await ctx.send(embed=embed)
 
