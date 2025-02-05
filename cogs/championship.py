@@ -1,7 +1,17 @@
 # cogs/championship.py
 import discord
 from discord.ext import commands
-from utils import *
+from utils import (
+    error_embed,
+    get_last_submission,
+    is_same_day,
+    parse_coupon_link,
+    calculate_points,
+    save_submission,
+    get_user_rank,
+    count_daily_submissions,
+    get_user_profile
+)
 from datetime import datetime
 import re
 import logging
@@ -9,8 +19,11 @@ import logging
 class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
     def __init__(self, bot):
         self.bot = bot
+        # Channel where submissions are accepted
         self.submission_channel = "mistrzostwa-typerskie"
+        # Role required to submit
         self.required_role = "Zweryfikowany"
+        # Map bet types to emoji for a better UI
         self.emoji_map = {
             "solo": "⚔️",
             "ako": "🎯"
@@ -18,22 +31,31 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
 
     @commands.Cog.listener()
     async def on_message(self, message):
+        # Ignore messages from bots and those not in the submission channel
         if message.author.bot or message.channel.name != self.submission_channel:
             return
 
-        # Walidacja podstawowa
+        # Validate the message format: expected "[punkty] | [link]"
         if not re.match(r'^\d+ \| https?://\S+', message.content):
             await message.delete()
-            return await error_embed(message.channel, 
+            await error_embed(message.channel, 
                 "**Nieprawidłowy format!**\nPoprawny format: `[punkty] | [link]`\nPrzykład: `250 | https://example.com`")
+            return
 
-        # Sprawdzenie uprawnień
+        # Check if the user meets role and daily submission requirements
         if not await self.check_requirements(message):
             return
 
-        # Przetwarzanie zgłoszenia
-        points, link = message.content.split('|', 1)
-        result = await self.process_submission(message.author, link.strip(), int(points.strip()))
+        # Process the submission message
+        try:
+            points_str, link = message.content.split('|', 1)
+            declared_points = int(points_str.strip())
+        except Exception as e:
+            logging.error(f"Błąd przy rozdzielaniu zgłoszenia: {e}")
+            await error_embed(message.channel, "Błąd przetwarzania formatu zgłoszenia.")
+            return
+
+        result = await self.process_submission(message.author, link.strip(), declared_points)
         
         if result['status'] == 'success':
             await self.send_success(message, result)
@@ -41,40 +63,40 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             await error_embed(message.channel, result['message'])
 
     async def check_requirements(self, message):
-        # Sprawdzenie roli
+        # Verify the user has the required role
         if not any(role.name == self.required_role for role in message.author.roles):
             await error_embed(message.channel, 
                 f"Wymagana rola **{self.required_role}** do uczestnictwa!")
             return False
 
-        # Limit dzienny
+        # Verify the user has not already submitted today
         last_sub = get_last_submission(message.author.id)
         if last_sub and is_same_day(last_sub, datetime.now(self.bot.warsaw_tz)):
             await error_embed(message.channel,
-                "**Dzienny limit!**\nMożesz wysłać tylko jeden kupon dziennie!")
+                "**Dzienny limit!**\nMożesz wysłać tylko jeden kupon dzisiaj!")
             return False
 
         return True
 
     async def process_submission(self, user, link, declared_points):
         try:
-            # Dekodowanie kuponu
+            # Parse the coupon data from the link (e.g., decoding JWT)
             coupon_data = parse_coupon_link(link)
             if not coupon_data:
                 return {'status': 'error', 'message': 'Nieprawidłowy link do kuponu!'}
 
-            # Obliczanie punktów
+            # Calculate the points based on the coupon data
             calculated_points = calculate_points(
                 coupon_data['amount_won'],
                 coupon_data['odds'],
                 coupon_data['bet_type']
             )
 
-            # Weryfikacja zgodności
+            # Verify the declared points roughly match the calculated ones (tolerance of 50 points)
             if abs(declared_points - calculated_points) > 50:
                 return {'status': 'error', 'message': 'Niezgodność punktów! Sprawdź obliczenia.'}
 
-            # Zapis do bazy
+            # Save the submission to the database
             save_submission(
                 user_id=user.id,
                 username=user.display_name,
@@ -90,10 +112,11 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             }
 
         except Exception as e:
-            logging.error(f"Błąd przetwarzania: {e}")
+            logging.error(f"Błąd przetwarzania zgłoszenia: {e}")
             return {'status': 'error', 'message': 'Wewnętrzny błąd systemu!'}
 
     async def send_success(self, message, result):
+        # Create an embed to confirm a successful submission
         embed = discord.Embed(
             title=f"✅ Kupon zaakceptowany! {self.emoji_map.get(result['bet_type'], '')}",
             color=discord.Color.green(),
@@ -129,7 +152,7 @@ class Championship(commands.Cog, name="Mistrzostwa Typerskie"):
             color=ctx.author.color
         )
         
-        # Pasek postępu
+        # Create a progress bar toward a reward (example threshold: 5000 points)
         progress = user_data['points'] / 5000 * 100
         progress_bar = f"```css\n[{'█' * int(progress//5)}{' ' * (20 - int(progress//5))}] {user_data['points']}/5000```"
         
