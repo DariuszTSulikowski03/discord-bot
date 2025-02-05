@@ -1,10 +1,19 @@
-# utils.py
-def calculate_points(bet_type: str, odds: float, amount: float) -> int:
-    bet_type = bet_type.lower()
-    if bet_type == "solo":
-        multiplier = 2 if odds > 10.0 else 1
-    elif bet_type == "ako":
-        multiplier = 5 if odds > 10.0 else 2.5
+def calculate_points(typ, odds, kwota):
+    """
+    Calculate points based on the bet type, odds, and amount (kwota).
+
+    For example:
+    - For 'win', points = kwota * (odds - 1)
+    - For 'draw', points = half of that value
+    - For 'lose', points could be negative or 0
+    """
+    typ = typ.lower()
+    if typ == 'win':
+        return kwota * (odds - 1)
+    elif typ == 'draw':
+        return kwota * (odds - 1) / 2
+    elif typ == 'lose':
+        return -kwota
     else:
-        multiplier = 1
-    return int(amount * multiplier)
+        # Unrecognized type returns 0 points.
+        return 0
