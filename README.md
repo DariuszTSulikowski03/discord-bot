@@ -1,15 +1,4 @@
-Na podstawie widocznego repozytorium na GitHubie, oto kilka rzeczy, które możesz poprawić i ulepszyć:
 
-### **1. Popraw README.md**
-README to pierwsza rzecz, jaką widzą użytkownicy Twojego repozytorium. Obecnie jest bardzo podstawowe. Możesz je rozszerzyć, dodając:
-- Opis projektu: Co robi bot, do czego służy?
-- Instrukcję instalacji: Jak uruchomić bota?
-- Listę funkcji: Jakie ma możliwości?
-- Przykłady użycia: Jakie komendy obsługuje?
-- Informacje o licencji (jeśli chcesz dodać licencję)
-
-#### **Przykładowa struktura README.md**
-```markdown
 # Discord Bot 🎮
 
 Bot Discorda do turniejów typerskich.
