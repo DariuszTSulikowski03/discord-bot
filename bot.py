@@ -1,29 +1,43 @@
 import discord
 from discord.ext import commands
-import os
-import asyncio
 from dotenv import load_dotenv
+import os
+import logging
+import pytz
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+class CustomBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            help_command=None,
+            case_insensitive=True
+        )
+        self.warsaw_tz = pytz.timezone('Europe/Warsaw')
+        self.start_time = discord.utils.utcnow()
 
-intents = discord.Intents.default()
-intents.message_content = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-async def load_cogs():
-    await bot.load_extension("cogs.admin")
-    await bot.load_extension("cogs.championship")
+bot = CustomBot()
 
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} jest online!")
+    logging.info(f"{bot.user.name} gotowy do działania!")
+    await bot.tree.sync()
 
-async def main():
-    async with bot:
-        await load_cogs()
-        await bot.start(TOKEN)
+if __name__ == "__main__":
+    initial_extensions = [
+        'cogs.championship',
+        'cogs.admin'
+    ]
+    
+    for extension in initial_extensions:
+        try:
+            bot.load_extension(extension)
+            logging.info(f"Załadowano moduł: {extension}")
+        except Exception as e:
+            logging.error(f"Błąd przy ładowaniu {extension}: {e}")
 
-asyncio.run(main())
+    bot.run(os.getenv("DISCORD_TOKEN"))
