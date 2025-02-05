@@ -1,36 +1,13 @@
+# Discord Bot - Turnieje Typerskie
 
-# Discord Bot 🎮
+## Opis projektu
+Ten projekt to bot Discord służący do obsługi turniejów typerskich. Uczestnicy mogą zgłaszać swoje kupony, zdobywać punkty oraz sprawdzać swój ranking. Bot zawiera również panel administracyjny dla organizatorów.
 
-Bot Discorda do turniejów typerskich.
+## Funkcje
+- **Zgłaszanie kuponów**: Użytkownicy przesyłają zgłoszenia w dedykowanym kanale.
+- **Walidacja zgłoszeń**: Sprawdzenie formatu wiadomości, weryfikacja ról oraz ograniczenie do jednego zgłoszenia dziennie.
+- **Obliczanie punktów**: Automatyczne liczenie punktów na podstawie danych z kuponu.
+- **Ranking i profil**: Użytkownicy mogą sprawdzić swój profil oraz pozycję w rankingu.
+- **Statystyki**: Panel administracyjny z ogólnymi statystykami turnieju.
 
-## ✨ Funkcje
-- Obsługa zgłoszeń kuponów i ich weryfikacja.
-- System punktacji i rankingów.
-- Interaktywny profil gracza.
-- Panel administracyjny dla organizatorów turnieju.
-
-## 🛠 Instalacja
-Aby uruchomić bota, wykonaj poniższe kroki:
-
-1. **Sklonuj repozytorium:**
-   ```sh
-   git clone https://github.com/TWOJ-NICK/discord-bot.git
-   cd discord-bot
-   ```
-
-2. **Zainstaluj wymagane zależności:**
-   ```sh
-   pip install -r requirements.txt
-   ```
-
-3. **Dodaj plik `.env` i wpisz swój token Discorda:**
-   ```
-   DISCORD_TOKEN=twój-token
-   GUILD_ID=id-serwera
-   ```
-
-4. **Uruchom bota:**
-   ```sh
-   python bot.py
-   ```
-
+## Struktura projektu
