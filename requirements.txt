@@ -1,27 +1,2 @@
-# Discord Bot Dependencies
-discord.py==2.3.2  # For interacting with the Discord API
-python-dotenv==1.0.0  # For managing environment variables
-
-# Database Integration (Optional)
-sqlalchemy==2.0.23  # For ORM-based database interactions
-psycopg2-binary==2.9.9  # For PostgreSQL database support (if using PostgreSQL)
-
-# OCR for Coupon Validation (Optional)
-pytesseract==0.3.10  # For extracting text from images
-Pillow==10.1.0  # For image processing
-
-# Web Framework (For Website Backend)
-Flask==2.3.3  # For building the website backend
-Flask-SocketIO==5.3.6  # For real-time updates (WebSockets)
-gunicorn==20.1.0  # For deploying the Flask app on production servers
-
-# Cloud Storage (Optional)
-boto3==1.34.7  # For AWS S3 integration (if storing images in the cloud)
-
-# Analytics and Logging
-pandas==2.1.3  # For data analysis and reporting
-matplotlib==3.8.2  # For generating charts and visualizations
-
-# Miscellaneous Utilities
-requests==2.31.0  # For making HTTP requests
-schedule==1.2.1  # For scheduling tasks (e.g., daily reminders)
+discord.py==2.3.2
+python-dotenv==1.0.0
