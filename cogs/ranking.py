@@ -1,70 +1,62 @@
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
-
-class Paginator(View):
-    def __init__(self, pages, timeout=60):
-        super().__init__(timeout=timeout)
-        self.pages = pages
-        self.current_page = 0
-
-    @discord.ui.button(label="⬅️", style=discord.ButtonStyle.primary)
-    async def previous(self, interaction: discord.Interaction, button: Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            await interaction.response.edit_message(embed=self.pages[self.current_page])
-
-    @discord.ui.button(label="➡️", style=discord.ButtonStyle.primary)
-    async def next(self, interaction: discord.Interaction, button: Button):
-        if self.current_page < len(self.pages) - 1:
-            self.current_page += 1
-            await interaction.response.edit_message(embed=self.pages[self.current_page])
+from datetime import datetime
+import re
 
 class RankingCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    async def get_top_users(self, limit=20, offset=0):
-        return await self.bot.db.fetchall('''
-            SELECT user_id, points, submissions 
-            FROM users 
-            ORDER BY points DESC 
-            LIMIT ? OFFSET ?
-        ''', limit, offset)
+    @commands.command(name="kupon", help="Dodaj kupon i zdobywaj punkty.")
+    @commands.has_role("zweryfikowany")
+    async def coupon(self, ctx, points: int, link: str):
+        """Allows a verified user to submit a coupon once per day with automatic point calculation."""
+        user_id = ctx.author.id
+        today = datetime.utcnow().date()
 
-    @commands.command(name="ranking", help="Displays the extended tournament ranking")
-    async def ranking(self, ctx, page: int = 1):
-        per_page = 20
-        offset = (page - 1) * per_page
-        total_users_result = await self.bot.db.fetchone('SELECT COUNT(*) FROM users')
-        total_users = total_users_result[0] if total_users_result else 0
-        total_pages = (total_users + per_page - 1) // per_page if total_users else 1
+        # Check if user already submitted today
+        last_submission = await self.bot.db.fetchone("SELECT last_submission FROM users WHERE user_id = ?", user_id)
 
-        if page < 1 or page > total_pages:
-            return await ctx.send("❌ Invalid page number!")
+        if last_submission and last_submission[0]:
+            last_submission_date = datetime.strptime(last_submission[0], "%Y-%m-%d").date()
+            if last_submission_date == today:
+                return await ctx.send("⛔ Możesz zgłosić kupon **tylko raz dziennie**!")
 
-        # Build paginated embeds for each page
-        pages = []
-        for i in range(total_pages):
-            embed = discord.Embed(
-                title=f"🏆 Tournament Ranking - Page {i+1}/{total_pages}",
-                color=discord.Color.gold(),
-                description="Top participants"
-            )
-            top_users = await self.get_top_users(per_page, i * per_page)
-            for idx, (user_id, points, subs) in enumerate(top_users, 1):
-                user = ctx.guild.get_member(user_id) or await self.bot.fetch_user(user_id)
-                emoji = ["🥇", "🥈", "🥉"][idx-1] if idx <= 3 else f"{idx}."
-                avg = f"**Average:** {points/subs:.1f}" if subs > 0 else ""
-                embed.add_field(
-                    name=f"{emoji} {user.display_name if user else 'Unknown'}",
-                    value=f"**Points:** {points}\n**Submissions:** {subs}\n{avg}",
-                    inline=False
-                )
-            pages.append(embed)
+        # Automatic point calculation based on bet type
+        bet_type, multiplier = self.calculate_points(points, link)
 
-        view = Paginator(pages)
-        await ctx.send(embed=pages[page-1], view=view)
+        if not bet_type:
+            return await ctx.send("❌ Nie udało się rozpoznać typu zakładu. Sprawdź link!")
+
+        total_points = int(points * multiplier)
+
+        # Update or insert points
+        existing_user = await self.bot.db.fetchone("SELECT points FROM users WHERE user_id = ?", user_id)
+
+        if existing_user:
+            new_points = existing_user[0] + total_points
+            await self.bot.db.execute("UPDATE users SET points = ?, last_submission = ? WHERE user_id = ?", new_points, today, user_id)
+        else:
+            await self.bot.db.execute("INSERT INTO users (user_id, points, last_submission) VALUES (?, ?, ?)", user_id, total_points, today)
+
+        await ctx.send(f"✅ {ctx.author.mention} dodał kupon **{bet_type}**, zdobywając **{total_points} pkt**! [Kupon]({link})")
+
+    def calculate_points(self, amount, link):
+        """Determine bet type and point multiplier."""
+        odds = self.extract_odds_from_link(link)
+        if not odds:
+            return None, None
+
+        if "solo" in link.lower():
+            return "SOLO", 2.0 if odds > 10.0 else 1.0
+        elif "ako" in link.lower():
+            return "AKO", 5.0 if odds > 10.0 else 2.5
+        return None, None
+
+    def extract_odds_from_link(self, link):
+        """Extract odds from the provided link (mock function)."""
+        match = re.search(r"odds=(\d+\.\d+)", link)
+        return float(match.group(1)) if match else None
 
 async def setup(bot):
     await bot.add_cog(RankingCog(bot))
