@@ -1,15 +1,5 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Environment variables file
+*.pyc
+config.json
 .env
-
-# Virtual environments
-venv/
-env/
-ENV/
-
-# Logs
-*.log
+tournament.db
