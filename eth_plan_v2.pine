@@ -1,4 +1,4 @@
-//@version=6
+//@version=5
 indicator("ETH Plan v2 — LIVE (Breakout+Pullback, Risk Panel, BTC guard)", overlay=true, max_labels_count=500)
 
 // ==== USTAWIENIA ====
@@ -319,8 +319,15 @@ if useTable
 
         // Nagłówki
         for c = 0 to 6
-            table.cell(t, c, 2, c==0 ? "Setup" : c==1 ? "Entry" : c==2 ? "SL" : c==3 ? "TP1" :
-                                    c==4 ? "TP2" : c==5 ? "Qty" : "Score",
+            headerText = switch c
+                0 => "Setup"
+                1 => "Entry"
+                2 => "SL"
+                3 => "TP1"
+                4 => "TP2"
+                5 => "Qty"
+                6 => "Score"
+            table.cell(t, c, 2, headerText,
                        text_size=panelSize, text_color=color.white, bgcolor=color.new(color.gray, 85))
 
         // Teksty Qty (używamy zaokrąglonych jeśli są)
