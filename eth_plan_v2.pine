@@ -1,0 +1,481 @@
+//@version=6
+indicator("ETH Plan v2 — LIVE (Breakout+Pullback, Risk Panel, BTC guard)", overlay=true, max_labels_count=500)
+
+// ==== USTAWIENIA ====
+// — pre-alert / wolumen / ATR filtry
+useDynOff  = input.bool(false, "Pre-Alert: dynamiczny offset (wg ATR%)")
+offPctFix  = input.float(0.003, "Pre-Alert: offset stały (0.3% = 0.003)", step=0.001)
+volMult    = input.float(1.2, "Volume gate × SMA20", step=0.1)
+atrMin     = input.float(0.5, "ATR% min (NO TRADE poniżej)", step=0.1)
+atrHighThr = input.float(1.2, "ATR% wysoka zmienność", step=0.1)
+
+// — Donchian adaptacyjny
+dcFast = input.int(48, "Donchian fast (wysoka zmienność)", minval=10)
+dcMid  = input.int(60, "Donchian mid", minval=10)
+dcSlow = input.int(72, "Donchian slow (spokojnie)", minval=10)
+
+// — Risk / SL/TP
+riskNorm = input.float(5.0, "Ryzyko USD (normal)", step=0.5)
+riskHi   = input.float(3.5, "Ryzyko USD (ATR% high)", step=0.5)
+slMulBO  = input.float(1.2, "SL × ATR (breakout)", step=0.1)
+slMulPB  = input.float(0.9, "SL × ATR (pullback)", step=0.1)
+tp1Mul   = input.float(1.0, "TP1 × ATR", step=0.1)
+tp2Mul   = input.float(2.0, "TP2 × ATR", step=0.1)
+
+// — Trend
+emaLenFast = input.int(50, "EMA fast", minval=2)
+emaLenSlow = input.int(200, "EMA slow", minval=5)
+slopeLook  = input.int(3, "EMA200 slope lookback (bary)", minval=1)
+
+// — BTC guard
+btcSym      = input.symbol("BINANCE:BTCUSDT", "BTC (guard) symbol")
+btcThrUp    = input.float( 1.5, "Guard przeciw SHORT (BTC 1H wzrost > %)", step=0.1)
+btcThrDn    = input.float(-1.5, "Guard przeciw LONG  (BTC 1H spadek < %)", step=0.1)
+useBtcGuard = input.bool(true, "Użyj BTC guard")
+
+// — Kapitał / dźwignia cap nominalu
+capitalUSDC  = input.float(497.0, "Kapitał (USDC)")
+leverage     = input.float(3.0,   "Dźwignia (x)", minval=1, step=0.5)
+marginBuffer = input.float(0.10,  "Bufor marginesu (10%)", minval=0.05, step=0.01)
+
+// — Alert cooldown (bary)
+cooldownBars = input.int(1, "Alert cooldown (bary)", minval=0, maxval=10)
+
+// —— Dodatkowe wejścia ——
+newsPause  = input.bool(false, "PAUZA (makro/news) — blokuj handel")
+qtyStep    = input.float(0.0001, "Krok ilości (lot step ETH)", step=0.0001)
+priceTick  = input.float(0.1,    "Krok ceny (tick)", step=0.1)  // (na razie tylko do panelu)
+
+// — Logi
+useLogs = input.bool(true,  "Włącz Pine logs (tylko skrypty prywatne)")
+logPre  = input.bool(false, "Loguj pre-alerty (może spamować)")
+
+// === PANEL: ustawienia ===
+useTable     = input.bool(true,  "Panel: TABELA (zamiast etykiety)")
+panelCorner  = input.string("Top Right", "Pozycja tabeli", options=["Top Right","Top Left","Bottom Right","Bottom Left"])
+panelSizeStr = input.string("Normal", "Rozmiar tekstu", options=["Tiny","Small","Normal","Large"])
+showPre      = input.bool(true, "Pokaż linie pre-alert")
+
+// mapowanie pozycji
+panelPos = switch panelCorner
+    "Top Right"     => position.top_right
+    "Top Left"      => position.top_left
+    "Bottom Right"  => position.bottom_right
+    "Bottom Left"   => position.bottom_left
+    => position.top_right
+
+// mapowanie rozmiaru
+panelSize = switch panelSizeStr
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Large"  => size.large
+    => size.normal
+
+// Formatki liczb
+fmt0 = "#"
+fmt1 = "#.0"
+fmt2 = "#.00"
+fmt3 = "#.000"
+
+// Kolor tła dla score 0..100
+scoreBg(s) =>
+    color c = na
+    if na(s)
+        c := color.new(color.gray, 85)
+    else if s >= 80
+        c := color.new(color.lime, 78)
+    else if s >= 60
+        c := color.new(color.yellow, 80)
+    else
+        c := color.new(color.red, 80)
+    c
+
+// === Helper do rysowania wiersza tabeli ===
+fRow(_t, row, name, e, sl, tp1, tp2, qtyTxt, score, _panelSize) =>
+    table.cell(_t, 0, row, name, text_size=_panelSize, text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(_t, 1, row, na(e)   ? "na" : str.tostring(e,   fmt1), text_size=_panelSize)
+    table.cell(_t, 2, row, na(sl)  ? "na" : str.tostring(sl,  fmt1), text_size=_panelSize)
+    table.cell(_t, 3, row, na(tp1) ? "na" : str.tostring(tp1, fmt1), text_size=_panelSize)
+    table.cell(_t, 4, row, na(tp2) ? "na" : str.tostring(tp2, fmt1), text_size=_panelSize)
+    table.cell(_t, 5, row, qtyTxt, text_size=_panelSize)
+    table.cell(_t, 6, row, na(score) ? "NA" : str.tostring(score, fmt0),
+               text_size=_panelSize, bgcolor=scoreBg(score))
+
+// ==== WSKAŹNIKI PODSTAWOWE ====
+ema50   = ta.ema(close, emaLenFast)
+ema200  = ta.ema(close, emaLenSlow)
+slopeUp = ema200 > ema200[slopeLook]
+slopeDn = ema200 < ema200[slopeLook]
+
+// Filtr trendu zgodnie z planem (bez wymogu close > ema200)
+trendLong  = ema50 > ema200 and slopeUp
+trendShort = ema50 < ema200 and slopeDn
+
+atr     = ta.atr(14)
+atrPct  = atr / close * 100.0
+atrHigh = atrPct >= atrHighThr
+tradeON = atrPct >= atrMin
+canTrade = tradeON and not newsPause
+
+// Donchian adaptacyjny wg ATR%
+dcLen = atrPct >= 0.8 ? dcFast : atrPct >= 0.5 ? dcMid : dcSlow
+upper = ta.highest(high, dcLen)
+lower = ta.lowest(low,  dcLen)
+
+// Pre-alert offset
+offPct   = useDynOff ? (atrPct / 100.0) : offPctFix
+upperPre = upper * (1 - offPct)   // zbliżanie od dołu
+lowerPre = lower * (1 + offPct)   // zbliżanie od góry
+
+// Wolumen
+volSma  = ta.sma(volume, 20)
+volOK   = volume >= volSma * volMult
+
+// BTC guard (1H)
+btcClose1H = useBtcGuard ? request.security(btcSym, "60", close) : na
+btcPrev    = useBtcGuard ? nz(btcClose1H[1], btcClose1H) : na
+btcChg1H   = useBtcGuard and not na(btcPrev) ? (btcClose1H / btcPrev - 1.0) * 100.0 : 0.0
+btcOppLong  = useBtcGuard and (btcChg1H <= btcThrDn)   // pauza LONG gdy BTC 1H mocno spada
+btcOppShort = useBtcGuard and (btcChg1H >= btcThrUp)   // pauza SHORT gdy BTC 1H mocno rośnie
+
+// ==== SYGNAŁY ====
+// Pre-alerty (bar close, ale sprawdzamy high/low, by złapać zbliżenie)
+preUP   = canTrade and high > upperPre
+preDOWN = canTrade and low  < lowerPre
+
+// Breakout (na close)
+breakoutUP   = canTrade and trendLong  and volOK and close > upper and not btcOppLong
+breakoutDOWN = canTrade and trendShort and volOK and close < lower and not btcOppShort
+
+// Pullback: BB-mid + EMA50 jako strefa
+bbMid     = ta.sma(close, 20)
+ema20     = ta.ema(close, 20)
+pullLong  = canTrade and trendLong  and (low <= bbMid or low <= ema50)  and close > open and not btcOppLong
+pullShort = canTrade and trendShort and (high >= bbMid or high >= ema50) and close < open and not btcOppShort
+
+// ==== RISK PANEL / WIELKOŚĆ POZYCJI ====
+// Ryzyko USD dynamiczne wg zmienności
+riskUSD = atrHigh ? riskHi : riskNorm
+
+// Maks nominal wg marginesu
+maxNotional = capitalUSDC * leverage * (1 - marginBuffer)
+
+// — Breakout LONG (entry = upper)
+entryLong  = upper
+slLong     = entryLong - slMulBO * atr
+tp1Long    = entryLong + tp1Mul * atr
+tp2Long    = entryLong + tp2Mul * atr
+distL      = math.max(entryLong - slLong, 0)
+qtyRiskL   = distL > 0 ? (riskUSD / distL) : na
+qtyCapL    = entryLong > 0 ? (maxNotional / entryLong) : na
+qtyLong    = na(qtyRiskL) or na(qtyCapL) ? na : math.min(qtyRiskL, qtyCapL)
+
+// — Breakout SHORT (entry = lower)
+entryShort = lower
+slShort    = entryShort + slMulBO * atr
+tp1Short   = entryShort - tp1Mul * atr
+tp2Short   = entryShort - tp2Mul * atr
+distS      = math.max(slShort - entryShort, 0)
+qtyRiskS   = distS > 0 ? (riskUSD / distS) : na
+qtyCapS    = entryShort > 0 ? (maxNotional / entryShort) : na
+qtyShort   = na(qtyRiskS) or na(qtyCapS) ? na : math.min(qtyRiskS, qtyCapS)
+
+// — Pullback LONG (punkt retestu na bbMid)
+pbEntryL    = bbMid
+pbSLL       = pbEntryL - slMulPB * atr
+pbTP1L      = pbEntryL + tp1Mul * atr
+pbTP2L      = pbEntryL + tp2Mul * atr
+pbDistL     = math.max(pbEntryL - pbSLL, 0)
+pbQtyRiskL  = pbDistL > 0 ? (riskUSD / pbDistL) : na
+pbQtyCapL   = pbEntryL > 0 ? (maxNotional / pbEntryL) : na
+pbQtyL      = na(pbQtyRiskL) or na(pbQtyCapL) ? na : math.min(pbQtyRiskL, pbQtyCapL)
+
+// — Pullback SHORT (punkt retestu na bbMid)
+pbEntryS    = bbMid
+pbSLS       = pbEntryS + slMulPB * atr
+pbTP1S      = pbEntryS - tp1Mul * atr
+pbTP2S      = pbEntryS - tp2Mul * atr
+pbDistS     = math.max(pbSLS - pbEntryS, 0)
+pbQtyRiskS  = pbDistS > 0 ? (riskUSD / pbDistS) : na
+pbQtyCapS   = pbEntryS > 0 ? (maxNotional / pbEntryS) : na
+pbQtyS      = na(pbQtyRiskS) or na(pbQtyCapS) ? na : math.min(pbQtyRiskS, pbQtyCapS)
+
+// ==== ZAOKRĄGLENIA / POMOCNICZE ====
+roundTo(x, step) => step > 0 ? math.round(x/step) * step : x
+// Ilości po kroku giełdy
+qtyLongR  = na(qtyLong)  ? na : roundTo(qtyLong,  qtyStep)
+qtyShortR = na(qtyShort) ? na : roundTo(qtyShort, qtyStep)
+pbQtyLR   = na(pbQtyL)   ? na : roundTo(pbQtyL,   qtyStep)
+pbQtySR   = na(pbQtyS)   ? na : roundTo(pbQtyS,   qtyStep)
+
+// ==== RYSUNEK ====
+plot(ema50,   "EMA50",  color=color.new(color.teal, 0))
+plot(ema200,  "EMA200", color=color.new(color.orange, 0), linewidth=2)
+plot(ema20,   "EMA20 (trailing/pullback)", color=color.new(color.green, 40))
+plot(bbMid,   "BB mid (20)", color=color.new(color.blue, 50))
+plot(upper,   "Donchian High", color=color.new(color.fuchsia, 0), linewidth=2)
+plot(lower,   "Donchian Low",  color=color.new(color.fuchsia, 0), linewidth=2)
+plot(upperPre, "Pre-Alert High", color=color.new(color.fuchsia, 70), style=plot.style_line, linewidth=1, display= showPre ? display.all : display.none)
+plot(lowerPre, "Pre-Alert Low",  color=color.new(color.fuchsia, 70), style=plot.style_line, linewidth=1, display= showPre ? display.all : display.none)
+
+bgcolor(canTrade ? na : color.new(color.gray, 88))
+bgcolor(btcOppLong and trendLong   ? color.new(color.red, 80) : na)
+bgcolor(btcOppShort and trendShort ? color.new(color.red, 80) : na)
+
+// ======================= PRECYZYJNY „SAFETY SCORE” 0–100 =======================
+clamp(x, a, b) => math.max(a, math.min(b, x))
+// Trójkątny profil 0..1 z maksimum w "b" i wygaszaniem w [a..b] i [b..c]
+triBand(x, a, b, c) =>
+    x <= a ? 0.0 : x >= c ? 0.0 : x < b ? (x - a) / (b - a) : (c - x) / (c - b)
+// R/R 0..1 (TP2 ważniejszy)
+rrScore(entry, sl, tp1, tp2) =>
+    _sl = math.max(math.abs(entry - sl), 1e-6)
+    _r1 = math.abs(tp1 - entry) / _sl
+    _r2 = math.abs(tp2 - entry) / _sl
+    clamp((0.4 * _r1 + 0.6 * _r2) / 2.5, 0.0, 1.0)
+
+// Cechy 0..1
+emaGapPct   = math.abs(ema50 - ema200) / close * 100.0
+trendStr    = clamp(emaGapPct / 2.0, 0.0, 1.0)
+slopePct    = math.abs(ema200 - ema200[slopeLook]) / close * 100.0
+slopeStr    = clamp(slopePct / 0.5, 0.0, 1.0)
+volRatio    = volSma > 0 ? volume / volSma : 0.0
+volStr      = clamp(volRatio - 1.0, 0.0, 1.0)
+atrStr      = triBand(atrPct, 0.5, 0.9, 1.4)
+rng         = math.max(high - low, 1e-6)
+bullBody    = close > open ? (close - open) / rng : 0.0
+bearBody    = close < open ? (open - close) / rng : 0.0
+btcNormUp   = clamp((btcChg1H + 2.5) / 5.0, 0.0, 1.0)
+btcNormDn   = clamp((2.5 - btcChg1H) / 5.0, 0.0, 1.0)
+boProxL     = clamp((close - upper) / math.max(atr, 1e-6), 0.0, 1.0)
+boProxS     = clamp((lower - close) / math.max(atr, 1e-6), 0.0, 1.0)
+pbDistLPx   = math.min(math.abs(close - bbMid), math.abs(close - ema50))
+pbConfL     = 1.0 - clamp(pbDistLPx / (0.6 * math.max(atr, 1e-6)), 0.0, 1.0)
+pbConfS     = pbConfL
+
+capOK(qty, cap) =>
+    na(qty) or na(cap) ? 1.0 : (qty <= cap * 0.95 ? 1.0 : 0.6)
+capLbo = capOK(qtyLong,  qtyCapL)
+capSbo = capOK(qtyShort, qtyCapS)
+capLpb = capOK(pbQtyL,   pbQtyCapL)
+capSpb = capOK(pbQtyS,   pbQtyCapS)
+
+// Warunki ważności
+validBOlong   = canTrade and trendLong  and volOK and not btcOppLong
+validBOshort  = canTrade and trendShort and volOK and not btcOppShort
+validPBlong   = canTrade and trendLong  and not btcOppLong
+validPBshort  = canTrade and trendShort and not btcOppShort
+
+// Wagi (suma 1.0)
+wTrend = 0.20
+wSlope = 0.15
+wVol   = 0.15
+wATR   = 0.10
+wBTC   = 0.15
+wEdge  = 0.15
+wRR    = 0.10
+
+// Score’y
+rrBO_L = rrScore(entryLong,  slLong,  tp1Long,  tp2Long)
+rrBO_S = rrScore(entryShort, slShort, tp1Short, tp2Short)
+scoreBO_L = 100.0 * (wTrend*trendStr + wSlope*slopeStr + wVol*volStr + wATR*atrStr + wBTC*btcNormUp + wEdge*boProxL + wRR*rrBO_L) * capLbo
+scoreBO_S = 100.0 * (wTrend*trendStr + wSlope*slopeStr + wVol*volStr + wATR*atrStr + wBTC*btcNormDn + wEdge*boProxS + wRR*rrBO_S) * capSbo
+
+rrPB_L = rrScore(pbEntryL, pbSLL, pbTP1L, pbTP2L)
+rrPB_S = rrScore(pbEntryS, pbSLS, pbTP1S, pbTP2S)
+scorePB_L = 100.0 * (wTrend*trendStr + wSlope*slopeStr + wVol*volStr + wATR*atrStr + wBTC*btcNormUp + wEdge*pbConfL + wRR*rrPB_L + 0.05*bullBody) * capLpb
+scorePB_S = 100.0 * (wTrend*trendStr + wSlope*slopeStr + wVol*volStr + wATR*atrStr + wBTC*btcNormDn + wEdge*pbConfS + wRR*rrPB_S + 0.05*bearBody) * capSpb
+
+// Wyłącz nieważne
+scoreBO_L := validBOlong  ? scoreBO_L : na
+scoreBO_S := validBOshort ? scoreBO_S : na
+scorePB_L := validPBlong  ? scorePB_L : na
+scorePB_S := validPBshort ? scorePB_S : na
+
+// Decyzje
+bestLong  = math.max(nz(scorePB_L, -1), nz(scoreBO_L, -1))
+bestShort = math.max(nz(scorePB_S, -1), nz(scoreBO_S, -1))
+saferLong  = na(scorePB_L) and na(scoreBO_L) ? "N/A" : (nz(scorePB_L, -1) >= nz(scoreBO_L, -1) ? "Pullback" : "Breakout")
+saferShort = na(scorePB_S) and na(scoreBO_S) ? "N/A" : (nz(scorePB_S, -1) >= nz(scoreBO_S, -1) ? "Pullback" : "Breakout")
+
+// === PANEL: TABELA ===
+var table t = na
+if useTable
+    if na(t)
+        // 7 kolumn × 7 wierszy (0..6)
+        t := table.new(panelPos, 7, 7, frame_width=1, border_width=0)
+    if barstate.islast
+        table.clear(t)
+
+        statusTxt = canTrade ? "🚦 TRADE ON" : "⛔ NO TRADE"
+        topLine = statusTxt + " | ATR% " + str.tostring(atrPct, "#.00") + " | DC " + str.tostring(dcLen) + " | Vol " + (volOK ? "OK" : "LOW") + " | Trend " + (trendLong ? "LONG" : trendShort ? "SHORT" : "FLAT") + " | BTC1H " + str.tostring(btcChg1H, "+#.00") + "%"
+        table.cell(t, 0, 0, topLine, text_size=panelSize, text_color=color.white,
+                   bgcolor=(canTrade ? color.new(color.teal, 70) : color.new(color.red, 70)))
+        table.merge_cells(t, 0, 0, 6, 0)
+
+        subLine = "Max Notional≈ $" + str.tostring(maxNotional, "#") + "   |   Ryzyko $" + str.tostring(riskUSD, "#.0") + "   |   Bezpieczniej: LONG → " + saferLong + " (" + (na(bestLong)  ? "NA" : str.tostring(bestLong,  fmt0) + "/100") + ") | SHORT → " + saferShort + " (" + (na(bestShort) ? "NA" : str.tostring(bestShort, fmt0) + "/100") + ")"
+        table.cell(t, 0, 1, subLine, text_size=panelSize, text_color=color.white, bgcolor=color.new(color.black, 0))
+        table.merge_cells(t, 0, 1, 6, 1)
+
+        // Nagłówki
+        for c = 0 to 6
+            table.cell(t, c, 2, c==0 ? "Setup" : c==1 ? "Entry" : c==2 ? "SL" : c==3 ? "TP1" :
+                                    c==4 ? "TP2" : c==5 ? "Qty" : "Score",
+                       text_size=panelSize, text_color=color.white, bgcolor=color.new(color.gray, 85))
+
+        // Teksty Qty (używamy zaokrąglonych jeśli są)
+        qtyLtxt  = na(qtyLongR)  ? (na(qtyLong)  ? "na" : str.tostring(qtyLong,  fmt3) + " ETH") : str.tostring(qtyLongR,  fmt3) + " ETH"
+        qtyStxt  = na(qtyShortR) ? (na(qtyShort) ? "na" : str.tostring(qtyShort, fmt3) + " ETH") : str.tostring(qtyShortR, fmt3) + " ETH"
+        qtyPLtxt = na(pbQtyLR)   ? (na(pbQtyL)   ? "na" : str.tostring(pbQtyL,   fmt3) + " ETH") : str.tostring(pbQtyLR,   fmt3) + " ETH"
+        qtyPStxt = na(pbQtySR)   ? (na(pbQtyS)   ? "na" : str.tostring(pbQtyS,   fmt3) + " ETH") : str.tostring(pbQtySR,   fmt3) + " ETH"
+
+        // Wiersze
+        fRow(t, 3, "🟢 BO ↑ LONG",  entryLong,  slLong,  tp1Long,  tp2Long,  qtyLtxt,  scoreBO_L, panelSize)
+        fRow(t, 4, "🔴 BO ↓ SHORT", entryShort, slShort, tp1Short, tp2Short, qtyStxt,  scoreBO_S, panelSize)
+        fRow(t, 5, "🟢 PB ↩ LONG",  pbEntryL,   pbSLL,   pbTP1L,   pbTP2L,   qtyPLtxt, scorePB_L, panelSize)
+        fRow(t, 6, "🔴 PB ↩ SHORT", pbEntryS,   pbSLS,   pbTP1S,   pbTP2S,   qtyPStxt, scorePB_S, panelSize)
+
+// === Label (fallback) — re-use ===
+var label info = na
+var string lastTxt = ""
+makeTxt() =>
+    status  = canTrade ? "🚦 TRADE ON" : "⛔ NO TRADE"
+    whyOff  = not tradeON ? " (ATR% < " + str.tostring(atrMin, "#.0") + "%)" : (newsPause ? " (PAUZA news)" : "")
+    btcNote = (btcOppLong and trendLong) ? " | BTC guard vs LONG" :
+              (btcOppShort and trendShort) ? " | BTC guard vs SHORT" : ""
+    status + whyOff + btcNote + "\n" +
+      "ATR% " + str.tostring(atrPct, "#.00") +
+      " | DC " + str.tostring(dcLen) +
+      " | Vol " + (volOK ? "OK" : "LOW") +
+      " | Trend " + (trendLong ? "LONG" : trendShort ? "SHORT" : "FLAT") +
+      " | BTC1H " + str.tostring(btcChg1H, "+#.00") + "%\n" +
+      "Max Notional≈ $" + str.tostring(maxNotional, "#") +
+      " | Ryzyko $" + str.tostring(riskUSD, "#.0") + "\n" +
+      "Bezpieczniej:  LONG → " + saferLong + " (" + str.tostring(bestLong, "#") + "/100)  |  SHORT → " + saferShort + " (" + str.tostring(bestShort, "#") + "/100)\n" +
+      "— Breakout LONG → Entry " + str.tostring(entryLong, "#.0") +
+      " | SL " + str.tostring(slLong, "#.0") +
+      " | TP1 " + str.tostring(tp1Long, "#.0") +
+      " | TP2 " + str.tostring(tp2Long, "#.0") +
+      " | Qty≈ " + (na(qtyLongR)  ? "na" : str.tostring(qtyLongR,  "#.000")) + "\n" +
+      "— Breakout SHORT → Entry " + str.tostring(entryShort, "#.0") +
+      " | SL " + str.tostring(slShort, "#.0") +
+      " | TP1 " + str.tostring(tp1Short, "#.0") +
+      " | TP2 " + str.tostring(tp2Short, "#.0") +
+      " | Qty≈ " + (na(qtyShortR) ? "na" : str.tostring(qtyShortR, "#.000")) + "\n" +
+      "— Pullback LONG (BB-mid) → Entry " + str.tostring(pbEntryL, "#.0") +
+      " | SL " + str.tostring(pbSLL, "#.0") +
+      " | TP1 " + str.tostring(pbTP1L, "#.0") +
+      " | TP2 " + str.tostring(pbTP2L, "#.0") +
+      " | Qty≈ " + (na(pbQtyLR) ? "na" : str.tostring(pbQtyLR, "#.000")) + "\n" +
+      "— Pullback SHORT (BB-mid) → Entry " + str.tostring(pbEntryS, "#.0") +
+      " | SL " + str.tostring(pbSLS, "#.0") +
+      " | TP1 " + str.tostring(pbTP1S, "#.0") +
+      " | TP2 " + str.tostring(pbTP2S, "#.0") +
+      " | Qty≈ " + (na(pbQtySR) ? "na" : str.tostring(pbQtySR, "#.000"))
+
+if not useTable and barstate.islast
+    newTxt = makeTxt()
+    if na(info)
+        info := label.new(bar_index, high, newTxt, style=label.style_label_down, textcolor=color.white, color=color.new(color.black, 0))
+    else
+        if newTxt != lastTxt
+            label.set_x(info, bar_index)
+            label.set_y(info, high)
+            label.set_text(info, newTxt)
+    lastTxt := newTxt
+
+// ==== LOGI: zmiany stanów ====
+var bool prevCanTrade = canTrade
+if canTrade != prevCanTrade
+    if useLogs
+        if canTrade
+            log.info("TRADE ON | ATR% {} ≥ {}{}", str.tostring(atrPct, "#.00"), str.tostring(atrMin, "#.0"), newsPause ? " | (PAUZA OFF)" : "")
+        else
+            if not tradeON
+                log.warning("NO TRADE | ATR% {} < {}", str.tostring(atrPct, "#.00"), str.tostring(atrMin, "#.0"))
+            else
+                log.warning("NO TRADE | PAUZA news")
+prevCanTrade := canTrade
+
+var bool prevAtrHigh = atrHigh
+if atrHigh and not prevAtrHigh
+    if useLogs
+        log.warning("ATR HIGH {}% ⇒ risk ${}", str.tostring(atrPct, "#.00"), str.tostring(riskHi, "#.0"))
+if not atrHigh and prevAtrHigh
+    if useLogs
+        log.info("ATR normal {}% ⇒ risk ${}", str.tostring(atrPct, "#.00"), str.tostring(riskNorm, "#.0"))
+prevAtrHigh := atrHigh
+
+var bool prevOppLong  = btcOppLong
+var bool prevOppShort = btcOppShort
+if btcOppLong and not prevOppLong
+    if useLogs
+        log.warning("BTC guard vs LONG ON | BTC1H {}%", str.tostring(btcChg1H, "+#.00"))
+if not btcOppLong and prevOppLong
+    if useLogs
+        log.info("BTC guard vs LONG OFF")
+prevOppLong := btcOppLong
+
+if btcOppShort and not prevOppShort
+    if useLogs
+        log.warning("BTC guard vs SHORT ON | BTC1H {}%", str.tostring(btcChg1H, "+#.00"))
+if not btcOppShort and prevOppShort
+    if useLogs
+        log.info("BTC guard vs SHORT OFF")
+prevOppShort := btcOppShort
+
+// ==== ALERTY z cooldownem ====
+var int lastPreUpBar   = na
+var int lastPreDnBar   = na
+var int lastBrkUpBar   = na
+var int lastBrkDnBar   = na
+var int lastPBLongBar  = na
+var int lastPBShortBar = na
+
+okPreUp   = preUP        and (na(lastPreUpBar)   or bar_index >= lastPreUpBar   + cooldownBars)
+okPreDn   = preDOWN      and (na(lastPreDnBar)   or bar_index >= lastPreDnBar   + cooldownBars)
+okBrkUp   = breakoutUP   and (na(lastBrkUpBar)   or bar_index >= lastBrkUpBar   + cooldownBars)   and barstate.isconfirmed
+okBrkDn   = breakoutDOWN and (na(lastBrkDnBar)   or bar_index >= lastBrkDnBar   + cooldownBars)   and barstate.isconfirmed
+okPBLong  = pullLong     and (na(lastPBLongBar)  or bar_index >= lastPBLongBar  + cooldownBars)   and barstate.isconfirmed
+okPBShort = pullShort    and (na(lastPBShortBar) or bar_index >= lastPBShortBar + cooldownBars)   and barstate.isconfirmed
+
+if okPreUp
+    lastPreUpBar := bar_index
+    if useLogs and logPre
+        log.info("PRE-ALERT UP | near Donchian High {}", str.tostring(upper, "#.1"))
+if okPreDn
+    lastPreDnBar := bar_index
+    if useLogs and logPre
+        log.info("PRE-ALERT DOWN | near Donchian Low {}", str.tostring(lower, "#.1"))
+if okBrkUp
+    lastBrkUpBar := bar_index
+    if useLogs
+        log.info("BREAKOUT UP | entry {} sl {} tp1 {} tp2 {} | qty {}",
+             str.tostring(entryLong, "#.1"), str.tostring(slLong, "#.1"), str.tostring(tp1Long, "#.1"), str.tostring(tp2Long, "#.1"), na(qtyLongR) ? "na" : str.tostring(qtyLongR, "#.000"))
+if okBrkDn
+    lastBrkDnBar := bar_index
+    if useLogs
+        log.info("BREAKOUT DOWN | entry {} sl {} tp1 {} tp2 {} | qty {}",
+             str.tostring(entryShort, "#.1"), str.tostring(slShort, "#.1"), str.tostring(tp1Short, "#.1"), str.tostring(tp2Short, "#.1"), na(qtyShortR) ? "na" : str.tostring(qtyShortR, "#.000"))
+if okPBLong
+    lastPBLongBar := bar_index
+    if useLogs
+        log.info("PULLBACK LONG | entry {} sl {} tp1 {} tp2 {} | qty {}",
+             str.tostring(pbEntryL, "#.1"), str.tostring(pbSLL, "#.1"), str.tostring(pbTP1L, "#.1"), str.tostring(pbTP2L, "#.1"), na(pbQtyLR) ? "na" : str.tostring(pbQtyLR, "#.000"))
+if okPBShort
+    lastPBShortBar := bar_index
+    if useLogs
+        log.info("PULLBACK SHORT | entry {} sl {} tp1 {} tp2 {} | qty {}",
+             str.tostring(pbEntryS, "#.1"), str.tostring(pbSLS, "#.1"), str.tostring(pbTP1S, "#.1"), str.tostring(pbTP2S, "#.1"), na(pbQtySR) ? "na" : str.tostring(pbQtySR, "#.000"))
+
+alertcondition(okPreUp,      "Pre-Alert UP",           "ETH near Donchian High (pre-alert)")
+alertcondition(okPreDn,      "Pre-Alert DOWN",         "ETH near Donchian Low (pre-alert)")
+alertcondition(okBrkUp,      "Breakout UP (1H)",       "ETH close > Donchian High (trend+volume)")
+alertcondition(okBrkDn,      "Breakout DOWN (1H)",     "ETH close < Donchian Low (trend+volume)")
+alertcondition(okPBLong,     "Pullback LONG",          "ETH pullback to BB-mid/EMA50 (long setup)")
+alertcondition(okPBShort,    "Pullback SHORT",         "ETH pullback to BB-mid/EMA50 (short setup)")
+alertcondition(tradeON,      "ATR% ON",                "ATR% ≥ min threshold")
+alertcondition(not tradeON,  "ATR% OFF",               "ATR% below min threshold")
+alertcondition(atrHigh,      "High Volatility",        "ATR% high — consider lower USD risk")
+alertcondition(btcOppLong,   "BTC guard vs LONG",      "BTC 1H drop > threshold — pause longs")
+alertcondition(btcOppShort,  "BTC guard vs SHORT",     "BTC 1H rise > threshold — pause shorts")
